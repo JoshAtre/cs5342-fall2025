@@ -1,0 +1,231 @@
+"""Identity Theft vs Parody Account Labeler"""
+
+import csv
+from typing import List, Dict, Set
+from atproto import Client
+from difflib import SequenceMatcher
+import re
+
+# Label constants
+SIMILAR_NAME_LABEL = "similar-profile-name"
+SIMILAR_IMAGE_LABEL = "similar-profile-image"
+PARODY_LABEL = "parody-indicators"
+AUTH_CLAIM_LABEL = "claims-authenticity"
+AMBIGUOUS_LABEL = "ambiguous-identity"
+
+class IdentityLabeler:
+    """Labeler for detecting potential identity theft vs parody accounts"""
+    
+    def __init__(self, client: Client, input_dir: str):
+        self.client = client
+        self.input_dir = input_dir
+        
+        # Load data
+        self.known_figures = self._load_known_figures()
+        self.parody_keywords = self._load_parody_keywords()
+        self.auth_keywords = self._load_auth_keywords()
+        
+        # Thresholds
+        self.NAME_SIMILARITY_THRESHOLD = 0.85
+        self.PARODY_KEYWORD_THRESHOLD = 2  # Need at least 2 parody indicators
+    
+    def _load_known_figures(self) -> Dict[str, Dict]:
+        """Load list of known public figures to check against"""
+        figures = {}
+        try:
+            with open(f"{self.input_dir}/known-figures.csv", 'r') as f:
+                reader = csv.DictReader(f)
+                for row in reader:
+                    # Store by lowercase name for matching
+                    name_key = row['name'].lower()
+                    figures[name_key] = {
+                        'name': row['name'],
+                        'handle': row.get('handle', ''),
+                        'description': row.get('description', '')
+                    }
+        except FileNotFoundError:
+            print("Warning: known-figures.csv not found")
+        return figures
+    
+    def _load_parody_keywords(self) -> Set[str]:
+        """Load keywords that indicate parody/satire"""
+        keywords = {
+            'parody', 'satire', 'not really', 'fake', 'spoof',
+            'fan account', 'tribute', 'unofficial', 'joke',
+            'comedy', 'humor', 'satire account', 'not the real',
+            'impersonator', 'impersonation', 'roleplay', 'rp',
+            'fan page', 'stan account', 'meme'
+        }
+        
+        # Try to load from file if exists
+        try:
+            with open(f"{self.input_dir}/parody-keywords.csv", 'r') as f:
+                reader = csv.DictReader(f)
+                for row in reader:
+                    keywords.add(row['keyword'].lower())
+        except FileNotFoundError:
+            pass
+        
+        return keywords
+    
+    def _load_auth_keywords(self) -> Set[str]:
+        """Load keywords that claim authenticity"""
+        keywords = {
+            'official account', 'verified', 'real account',
+            'authentic', 'genuine', 'i am the real',
+            'this is my official', 'my official page',
+            'the one and only'
+        }
+        
+        try:
+            with open(f"{self.input_dir}/auth-keywords.csv", 'r') as f:
+                reader = csv.DictReader(f)
+                for row in reader:
+                    keywords.add(row['keyword'].lower())
+        except FileNotFoundError:
+            pass
+        
+        return keywords
+    
+    def moderate_account(self, handle: str) -> List[str]:
+        """
+        Main function to check an account for identity concerns
+        
+        Args:
+            handle: Bluesky handle (e.g., 'user.bsky.social')
+        
+        Returns:
+            List of applicable labels
+        """
+        labels = []
+        
+        try:
+            # Get profile information
+            profile = self.client.app.bsky.actor.get_profile({'actor': handle})
+            
+            # Extract profile data
+            display_name = profile.display_name if hasattr(profile, 'display_name') else ''
+            bio = profile.description if hasattr(profile, 'description') else ''
+            
+            # Check for name similarity with known figures
+            matched_figure = self._check_name_similarity(display_name)
+            
+            # Check for parody indicators in bio
+            parody_count = self._count_parody_indicators(bio, display_name)
+            
+            # Check for authenticity claims
+            has_auth_claims = self._check_auth_claims(bio)
+            
+            # Apply labeling logic
+            if matched_figure:
+                labels.append(SIMILAR_NAME_LABEL)
+                
+                # If similar name but has parody indicators, likely parody
+                if parody_count >= self.PARODY_KEYWORD_THRESHOLD:
+                    labels.append(PARODY_LABEL)
+                
+                # If similar name and claims authenticity, concerning
+                elif has_auth_claims:
+                    labels.append(AUTH_CLAIM_LABEL)
+                
+                # If similar name but unclear, mark as ambiguous
+                elif parody_count > 0 or has_auth_claims:
+                    labels.append(AMBIGUOUS_LABEL)
+            
+            # Even without name match, strong parody indicators
+            elif parody_count >= self.PARODY_KEYWORD_THRESHOLD:
+                labels.append(PARODY_LABEL)
+        
+        except Exception as e:
+            print(f"Error checking account {handle}: {e}")
+        
+        return labels
+    
+    def _check_name_similarity(self, display_name: str) -> str:
+        """
+        Check if display name is similar to any known figure
+        
+        Returns:
+            Name of matched figure or empty string
+        """
+        if not display_name:
+            return ""
+        
+        display_name_clean = display_name.lower().strip()
+        
+        # Remove common suffixes/prefixes that parody accounts use
+        # e.g., "Fake Elon Musk", "Elon Musk (Parody)"
+        cleaned = re.sub(r'\(.*?\)', '', display_name_clean)  # Remove parentheses
+        cleaned = re.sub(r'fake |not |parody |real ', '', cleaned)
+        cleaned = cleaned.strip()
+        
+        for figure_name, figure_data in self.known_figures.items():
+            # Calculate similarity
+            ratio = SequenceMatcher(None, cleaned, figure_name).ratio()
+            
+            if ratio >= self.NAME_SIMILARITY_THRESHOLD:
+                return figure_data['name']
+        
+        return ""
+    
+    def _count_parody_indicators(self, bio: str, display_name: str) -> int:
+        """
+        Count how many parody indicators are present
+        
+        Returns:
+            Number of parody indicators found
+        """
+        count = 0
+        text = f"{bio} {display_name}".lower()
+        
+        for keyword in self.parody_keywords:
+            if keyword in text:
+                count += 1
+        
+        # Check for emojis that indicate humor
+        humor_emojis = ['🤡', '😂', '🤣', '😜', '😝', '🎭', '🃏']
+        for emoji in humor_emojis:
+            if emoji in text:
+                count += 1
+        
+        return count
+    
+    def _check_auth_claims(self, bio: str) -> bool:
+        """
+        Check if bio contains authenticity claims
+        
+        Returns:
+            True if authenticity claims found
+        """
+        bio_lower = bio.lower()
+        
+        for keyword in self.auth_keywords:
+            if keyword in bio_lower:
+                return True
+        
+        return False
+    
+    def _get_recent_posts(self, handle: str, limit: int = 20) -> List[Dict]:
+        """
+        Get recent posts from an account
+        
+        Returns:
+            List of post records
+        """
+        try:
+            feed = self.client.app.bsky.feed.get_author_feed({
+                'actor': handle,
+                'limit': limit
+            })
+            
+            posts = []
+            if hasattr(feed, 'feed'):
+                for item in feed.feed:
+                    if hasattr(item, 'post') and hasattr(item.post, 'record'):
+                        posts.append(item.post.record)
+            
+            return posts
+        
+        except Exception as e:
+            print(f"Error fetching posts for {handle}: {e}")
+            return []
