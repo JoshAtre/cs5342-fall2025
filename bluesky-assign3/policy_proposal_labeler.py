@@ -44,16 +44,27 @@ class GrainOfSaltLabeler:
         # Known satire/parody accounts (baseline score: 9)
         # These are accounts where content is obviously not meant to be taken literally
         self.satire_accounts = {
+            # Established satire outlets
             'theonion.com',           # The Onion - famous satire
             'clickhole.com',          # ClickHole - satire
             'babylonbee.com',         # Babylon Bee - satire
             'hard-drive.net',         # Hard Drive - gaming satire
             'reductress.com',         # Reductress - satire
             'borowitz.bsky.social',   # Andy Borowitz - satire
+            
             # Parody accounts from our dataset
             'ice-parody.bsky.social',
             'donaldjtrump-maga.bsky.social',  # Fake Trump account
             'tedcrvz.bsky.social',    # Parody Ted Cruz
+            
+            # V2.0: Additional satire/joke accounts from dataset analysis
+            'satire-of-sevs.bsky.social',     # Satire account
+            'wokestudies.bsky.social',        # Satire account
+            'funnysnarkyjoke.bsky.social',    # Joke account
+            'ctrlaltresist.com',              # Satire/resistance humor
+            'darthstateworker.bsky.social',   # Satire account
+            'davidcorn.bsky.social',          # Often satirical commentary
+            'lawprofblawg.bsky.social',       # Satirical legal commentary
         }
         
         # Official/verified accounts (baseline score: 0-2)
@@ -70,6 +81,9 @@ class GrainOfSaltLabeler:
             'crockett.house.gov': 3,   # Congressional rep (partisan)
             'pelosi.house.gov': 3,     # Congressional rep (partisan)
             
+            # V2.0: Additional city/local government from dataset
+            'cityofdayton.bsky.social': 0,   # City government
+            
             # Major news outlets (generally lower scores)
             'nytimes.com': 1,
             'washingtonpost.com': 1,
@@ -84,6 +98,17 @@ class GrainOfSaltLabeler:
             'democracynow.org': 2,
             'thetimes.com': 1,
             'starsandstripes.bsky.social': 2,
+            
+            # V2.0: Additional news outlets from dataset analysis
+            'cnn.com': 0,              # Major news network
+            'nbcnews.com': 2,          # Major news network
+            'huffpost.com': 0,         # News aggregator/outlet
+            'forbes.com': 0,           # Business/news outlet
+            'economist.com': 1,        # News/analysis
+            'latimes.com': 1,          # Major newspaper
+            'pbsnews.org': 2,          # Public broadcasting
+            'propublica.org': 1,       # Investigative journalism
+            'factcheck.afp.com': 0,    # Fact-checking service
             
             # Election/research
             'mitelectionlab.bsky.social': 1,
@@ -131,7 +156,16 @@ class GrainOfSaltLabeler:
         self.sarcasm_markers = [
             'totally', 'definitely', 'surely', 'because that makes sense',
             '/s', '🙄', 'oh great', 'wonderful', 'fantastic',
-            'what could go wrong', 'nothing to see here'
+            'what could go wrong', 'nothing to see here',
+            
+            # V2.0: Enhanced satire/joke detection
+            'lmao', 'lol', '💀', '😂', '🤣',  # Laughing indicators
+            'fr fr', 'no cap', 'cap',  # Gen Z irony markers
+            'i\'m dead', 'i can\'t', 'crying',  # Extreme reactions
+            'not me', 'who did this',  # Meme phrases
+            'the way', 'bestie', 'sis',  # Informal/ironic address
+            'imagine', 'pov:', 'tell me why',  # Story/joke setups
+            'real talk though', 'all jokes aside',  # Signals mixing humor with seriousness
         ]
         
         # Credibility indicators (decreases score)
@@ -210,8 +244,8 @@ class GrainOfSaltLabeler:
         # Account score is the baseline, content can adjust it
         if account_score is not None:
             # Known account - use account score as strong baseline
-            # Content can adjust by up to +/- 2
-            adjustment = max(-2, min(2, content_score - 5))
+            # V2.0: Content can adjust by up to +/- 3 (increased from 2)
+            adjustment = max(-3, min(3, content_score - 5))
             final_score = account_score + adjustment
             reasoning['adjustments'].append(f"Content adjustment: {adjustment}")
         else:
@@ -246,6 +280,23 @@ class GrainOfSaltLabeler:
         # Check if it's a known official/news account
         if handle_lower in self.official_accounts:
             return self.official_accounts[handle_lower]
+        
+        # V2.0: Check for government domains (.gov)
+        if '.gov' in handle_lower:
+            # Federal/state/local government domains are generally authoritative
+            return 0
+        
+        # V2.0: Check for city/local government patterns
+        if any(keyword in handle_lower for keyword in ['cityof', 'city.', 'townof', 'countyof']):
+            # Local government accounts
+            return 0
+        
+        # V2.0: Check for major news organization domains
+        news_domains = ['.com', '.org', '.net']
+        major_news_keywords = ['news', 'times', 'post', 'press', 'herald', 'tribune', 'journal']
+        if any(domain in handle_lower for domain in news_domains):
+            if any(keyword in handle_lower for keyword in major_news_keywords):
+                return 1  # Likely a news organization
         
         # Check for parody indicators in handle
         for indicator in self.parody_indicators:
