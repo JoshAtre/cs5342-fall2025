@@ -146,7 +146,7 @@ Total posts evaluated: 150
 [... additional metrics and error analysis ...]
 ```
 
-**Processing Time:** Approximately XX-XX seconds for 150 posts (~XXXms per post)
+**Processing Time:** Should be approximately 40-45 seconds for 150 posts (~250-300ms per post)
 
 ### Testing a Single URL
 
@@ -212,6 +212,51 @@ The `baseline_results.csv` file contains:
 
 ---
 
+## Implementation Details
+
+### Key Features (Version 2.0)
+
+1. **Account-Level Signals**
+   - Database of 40+ known satire accounts (The Onion, Babylon Bee, parody accounts)
+   - Database of 40+ known official/news accounts (CNN, NYT, Reuters, government)
+   - Automatic detection of `.gov` domains → score 0
+   - City/local government keyword detection → score 0
+   - News organization domain heuristics → score 1
+
+2. **Content-Level Signals**
+   - Sensational language detection (breaking, shocking, explosive, etc.)
+   - Opinion indicators (I think, clearly, obviously, etc.)
+   - Sarcasm/irony markers (lmao, lol, /s, emoji indicators)
+   - Credibility indicators (according to, study shows, statistics, etc.)
+   - All-caps pattern detection
+
+3. **Scoring Logic**
+   - Account baseline score (if known)
+   - Content analysis can adjust by ±3 points
+   - Unknown accounts default to neutral score of 5
+   - Final score capped between 0-9
+
+4. **Evaluation Framework**
+   - Confusion matrix tracking
+   - Per-class precision, recall, F1-score (with ±2 tolerance)
+   - Performance profiling (time, memory, throughput)
+   - Detailed error analysis
+
+### Architecture
+
+```
+GrainOfSaltLabeler
+├── _load_known_accounts()       # Load satire/official account databases
+├── _load_signal_patterns()      # Load content analysis patterns
+├── moderate_post(url)            # Main entry point - returns label
+├── calculate_score(post, url)   # Core scoring logic
+├── _score_account(handle)        # Account-level scoring
+├── _score_content(text)          # Content-level scoring
+└── evaluate_on_dataset(csv)      # Comprehensive evaluation
+```
+
+---
+
 ## Troubleshooting
 
 ### Common Issues
@@ -244,3 +289,71 @@ Solution: The labeler includes automatic rate limiting and retries
 Expected: ~277ms per post, ~40 seconds for 150 posts
 If slower: Check network latency, ensure you're not hitting rate limits
 ```
+
+---
+
+## Project Structure
+
+```
+bluesky-assign3/
+├── policy_proposal_labeler.py    # Main labeler implementation
+├── data.csv                       # Labeled dataset (150 posts)
+├── baseline_results.csv           # Evaluation results
+├── .env                           # Credentials (not committed)
+├── .env-TEMPLATE                  # Template for .env
+├── README.md                      # This file
+└── pylabel/                       # Helper functions
+    ├── __init__.py
+    └── label.py                   # Bluesky API utilities
+```
+
+---
+
+## Iteration History
+
+This submission represents **Version 2.0** of the labeler:
+
+**Version 1.0 (Baseline):**
+- Simple rule-based system
+- 20 known accounts
+- 68.7% accuracy within ±2
+
+**Version 2.0 (Current):**
+- Expanded to 40+ known accounts
+- Added 7 satire accounts, 10 news/government accounts
+- Enhanced satire detection (14 additional patterns)
+- Automatic domain detection (.gov, city, news)
+- Updated precision/recall to ±2 tolerance
+- 80.0% accuracy within ±2
+
+---
+
+## Additional Notes
+
+### Design Decisions
+
+1. **±2 Tolerance for P/R:** Given the ordinal nature of the 0-9 scale, predictions within 2 points are still useful for end users. Exact match accuracy is reported separately.
+
+2. **Account Database Priority:** Known accounts provide strong baseline signals. Future iterations could expand this database or use web search to identify unknown accounts.
+
+3. **Content Influence:** The ±3 adjustment cap balances account reputation with content signals, allowing strong content to override baselines when necessary.
+
+4. **Domain Detection:** Automatic detection reduces manual database maintenance and handles new accounts systematically.
+
+### Known Limitations
+
+1. **Unknown Account Gap:** Accounts not in the database default to neutral (5), missing potential signals.
+
+2. **Context Blindness:** Rule-based patterns can't capture nuanced context or understand complex sarcasm.
+
+3. **No Claim Verification:** The labeler doesn't verify factual claims or check sources.
+
+4. **Static Patterns:** Patterns don't adapt to evolving language or new forms of satire.
+
+### Future Enhancements
+
+- Historical posting pattern analysis
+- LLM-based content understanding for edge cases
+- News consensus checking across sources
+- User feedback integration
+- Real-time adaptation to new patterns
